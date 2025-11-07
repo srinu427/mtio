@@ -104,7 +104,7 @@ async fn file_copy(
     let mut data_chunk_limits = vec![];
     let mut fw = fs::File::create(dst).await?;
     for part_idx in 0..num_parts {
-        match data_chunk_sem.try_acquire_many(2) {
+        match data_chunk_sem.try_acquire() {
             Ok(data_limit) => {
                 let src = src.to_path_buf();
                 let file_open_sem = file_open_sem.clone();
