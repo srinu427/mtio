@@ -104,45 +104,48 @@ async fn file_copy(
     let mut data_chunk_limits = vec![];
     let mut fw = fs::File::create(dst).await?;
     for part_idx in 0..num_parts {
-        match data_chunk_sem.try_acquire() {
-            Ok(data_limit) => {
-                let src = src.to_path_buf();
-                let file_open_sem = file_open_sem.clone();
-                let read_len = if part_idx == num_parts - 1 {
-                    size - (num_parts - 1) * part_size
-                } else {
-                    part_size
-                };
-                join_set.spawn(async move {
-                    let data =
-                        limit_file_read(&file_open_sem, &src, part_idx * part_size, read_len)
-                            .await?;
-                    io::Result::Ok((part_idx, data))
-                });
-                data_chunk_limits.push(data_limit);
-            }
-            Err(TryAcquireError::NoPermits) => {
-                while let Some(chunk_read_res) = join_set.join_next().await {
-                    let (part_idx, data) = chunk_read_res.map_err(|e| {
-                        io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            format!("Error with async runtime: {e}"),
-                        )
-                    })??;
-                    read_chunks[part_idx as usize] = Some(data);
+        loop {
+            match data_chunk_sem.try_acquire() {
+                Ok(data_limit) => {
+                    let src = src.to_path_buf();
+                    let file_open_sem = file_open_sem.clone();
+                    let read_len = if part_idx == num_parts - 1 {
+                        size - (num_parts - 1) * part_size
+                    } else {
+                        part_size
+                    };
+                    join_set.spawn(async move {
+                        let data =
+                            limit_file_read(&file_open_sem, &src, part_idx * part_size, read_len)
+                                .await?;
+                        io::Result::Ok((part_idx, data))
+                    });
+                    data_chunk_limits.push(data_limit);
+                    break;
                 }
-                while let Some(data) = read_chunks[next_chunk_to_write].take() {
-                    fw.write(&data).await?;
-                    data_chunk_limits.pop();
-                    next_chunk_to_write += 1;
+                Err(TryAcquireError::NoPermits) => {
+                    while let Some(chunk_read_res) = join_set.join_next().await {
+                        let (part_idx, data) = chunk_read_res.map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::BrokenPipe,
+                                format!("Error with async runtime: {e}"),
+                            )
+                        })??;
+                        read_chunks[part_idx as usize] = Some(data);
+                    }
+                    while let Some(data) = read_chunks[next_chunk_to_write].take() {
+                        fw.write(&data).await?;
+                        data_chunk_limits.pop();
+                        next_chunk_to_write += 1;
+                    }
+                    tokio::task::yield_now().await;
                 }
-                tokio::task::yield_now().await;
-            }
-            Err(TryAcquireError::Closed) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "Chunk storage semaphore closed",
-                ));
+                Err(TryAcquireError::Closed) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "Chunk storage semaphore closed",
+                    ));
+                }
             }
         }
     }
