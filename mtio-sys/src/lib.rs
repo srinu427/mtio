@@ -162,6 +162,7 @@ async fn file_copy(
         data_chunk_limits.pop();
         next_chunk_to_write += 1;
     }
+    drop(file_open_limit);
     Ok(())
 }
 
