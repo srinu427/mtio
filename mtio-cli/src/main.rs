@@ -10,7 +10,7 @@ pub struct CopyArgs {
     pub output: String,
     #[clap(long, short, default_value_t = 1 * 1024 * 1024)]
     pub part_size: u64,
-    #[clap(long, short, default_value_t = 64 * 1024 * 1024)]
+    #[clap(long, short, default_value_t = 256)]
     pub max_in_mem_parts: u64,
     #[clap(long, short, default_value_t = 2)]
     pub threads: usize,
