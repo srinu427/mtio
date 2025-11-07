@@ -146,6 +146,22 @@ async fn file_copy(
             }
         }
     }
+    while let Some(chunk_read_res) = join_set.join_next().await {
+        let (part_idx, data) = chunk_read_res.map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("Error with async runtime: {e}"),
+            )
+        })??;
+        read_chunks[part_idx as usize] = Some(data);
+    }
+    while next_chunk_to_write < num_parts as usize
+        && let Some(data) = read_chunks[next_chunk_to_write].take()
+    {
+        fw.write(&data).await?;
+        data_chunk_limits.pop();
+        next_chunk_to_write += 1;
+    }
     Ok(())
 }
 
