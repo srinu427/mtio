@@ -152,6 +152,7 @@ async fn file_copy(
                         part_to_write += 1;
                         println!("written part {} in {:?}", part_to_write, dst);
                     }
+                    tokio::task::yield_now().await;
                 }
                 Err(TryAcquireError::Closed) => {
                     return Err(io::Error::new(
