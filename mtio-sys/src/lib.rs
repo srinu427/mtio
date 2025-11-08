@@ -151,7 +151,7 @@ async fn file_copy(
                         part_to_write += 1;
                     }
                     if data_to_write.len() > 0 {
-                        fw.write(&data_to_write).await?;
+                        fw.write_all(&data_to_write).await?;
                     }
                     tokio::task::yield_now().await;
                 }
@@ -185,9 +185,8 @@ async fn file_copy(
             part_to_write += 1;
         }
         if data_to_write.len() > 0 {
-            fw.write(&data_to_write).await?;
+            fw.write_all(&data_to_write).await?;
         }
-        tokio::task::yield_now().await;
     }
     drop(all_data_limits);
     fw.flush().await?;
