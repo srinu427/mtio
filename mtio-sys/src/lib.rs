@@ -126,6 +126,7 @@ async fn file_copy(
                         let data =
                             limit_file_read(&file_open_sem, &src, part * part_size, data_len)
                                 .await?;
+                        println!("read data of part {} in {:?}", part, &src);
                         io::Result::Ok((part, data))
                     });
                 }
@@ -141,12 +142,14 @@ async fn file_copy(
                         )
                     })??;
                     part_datas[part as usize] = Some(data);
+                    println!("got data of part {} for {:?}", part, dst);
                     if part_to_write < num_parts
                         && let Some(data) = part_datas[part_to_write as usize].take()
                     {
                         fw.write(&data).await?;
                         all_data_limits.split(1);
                         part_to_write += 1;
+                        println!("written part {} in {:?}", part, dst);
                     }
                 }
                 Err(TryAcquireError::Closed) => {
@@ -170,12 +173,14 @@ async fn file_copy(
             )
         })??;
         part_datas[part as usize] = Some(data);
+        println!("got data of part {} for {:?}", part, dst);
         while part_to_write < num_parts
             && let Some(data) = part_datas[part_to_write as usize].take()
         {
             fw.write(&data).await?;
             all_data_limits.split(1);
             part_to_write += 1;
+            println!("written part {} in {:?}", part, dst);
         }
     }
     drop(fo_sem);
