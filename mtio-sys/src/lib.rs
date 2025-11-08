@@ -95,8 +95,7 @@ async fn file_copy(
 
     let mut part_datas: Vec<Option<Vec<u8>>> = vec![None; num_parts as usize];
     let mut all_data_limits = data_chunk_sem
-        .clone()
-        .acquire_many_owned(0)
+        .acquire_many(0)
         .await
         .map_err(acquire_to_io_error)?;
     let mut join_set = JoinSet::new();
@@ -117,7 +116,7 @@ async fn file_copy(
             part_size
         };
         loop {
-            match data_chunk_sem.clone().try_acquire_owned() {
+            match data_chunk_sem.try_acquire() {
                 Ok(limit) => {
                     let file_open_sem = file_open_sem.clone();
                     let src = src.to_path_buf();
