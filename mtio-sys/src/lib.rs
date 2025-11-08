@@ -127,6 +127,7 @@ async fn file_copy(
                                 .await?;
                         io::Result::Ok((part, data))
                     });
+                    tokio::task::yield_now().await;
                     break;
                 }
                 Err(TryAcquireError::NoPermits) => {
