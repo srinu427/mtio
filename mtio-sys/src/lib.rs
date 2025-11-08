@@ -141,7 +141,9 @@ async fn file_copy(
                         )
                     })??;
                     part_datas[part as usize] = Some(data);
-                    if let Some(data) = part_datas[part_to_write].take() {
+                    if part_to_write < num_parts
+                        && let Some(data) = part_datas[part_to_write as usize].take()
+                    {
                         fw.write(&data).await?;
                         all_data_limits.split(1);
                         part_to_write += 1;
@@ -168,7 +170,9 @@ async fn file_copy(
             )
         })??;
         part_datas[part as usize] = Some(data);
-        while let Some(data) = part_datas[part_to_write].take() {
+        while part_to_write < num_parts
+            && let Some(data) = part_datas[part_to_write as usize].take()
+        {
             fw.write(&data).await?;
             all_data_limits.split(1);
             part_to_write += 1;
