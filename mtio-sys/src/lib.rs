@@ -180,8 +180,9 @@ async fn file_copy(
             part_to_write += 1;
         }
     }
-    drop(fo_sem);
     drop(all_data_limits);
+    fw.flush().await?;
+    drop(fo_sem);
 
     Ok(())
 }
