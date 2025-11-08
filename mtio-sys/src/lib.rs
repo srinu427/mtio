@@ -129,6 +129,7 @@ async fn file_copy(
                         println!("read data of part {} in {:?}", part, &src);
                         io::Result::Ok((part, data))
                     });
+                    break;
                 }
                 Err(TryAcquireError::NoPermits) => {
                     let Some(chunk_res) = join_set.try_join_next() else {
