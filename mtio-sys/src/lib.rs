@@ -31,14 +31,14 @@ async fn limit_create_dir_all(semaphore: &Semaphore, path: &Path) -> io::Result<
     result
 }
 
-async fn limit_remove_file(semaphore: &Semaphore, path: &Path) -> io::Result<()> {
+async fn _limit_remove_file(semaphore: &Semaphore, path: &Path) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     let result = fs::remove_file(path).await;
     drop(limit);
     result
 }
 
-async fn limit_remove_dir(semaphore: &Semaphore, path: &Path) -> io::Result<()> {
+async fn _limit_remove_dir(semaphore: &Semaphore, path: &Path) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     let result = fs::remove_dir(path).await;
     drop(limit);
@@ -67,7 +67,7 @@ async fn _limit_file_read_full(semaphore: &Semaphore, path: &Path) -> io::Result
     Ok(buffer)
 }
 
-async fn limit_file_set_len(semaphore: &Semaphore, path: &Path, size: u64) -> io::Result<()> {
+async fn _limit_file_set_len(semaphore: &Semaphore, path: &Path, size: u64) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     let file = fs::File::create(path).await?;
     file.set_len(size).await?;
@@ -75,7 +75,7 @@ async fn limit_file_set_len(semaphore: &Semaphore, path: &Path, size: u64) -> io
     Ok(())
 }
 
-async fn limit_file_write(semaphore: &Semaphore, path: &Path, data: &[u8]) -> io::Result<()> {
+async fn _limit_file_write(semaphore: &Semaphore, path: &Path, data: &[u8]) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     fs::write(path, data).await?;
     drop(limit);
@@ -142,12 +142,16 @@ async fn file_copy(
                         )
                     })??;
                     part_datas[part as usize] = Some(data);
-                    if part_to_write < num_parts
+                    let mut data_to_write = vec![];
+                    while part_to_write < num_parts
                         && let Some(data) = part_datas[part_to_write as usize].take()
                     {
-                        fw.write(&data).await?;
+                        data_to_write.extend(data);
                         all_data_limits.split(1);
                         part_to_write += 1;
+                    }
+                    if data_to_write.len() > 0 {
+                        fw.write(&data_to_write).await?;
                     }
                     tokio::task::yield_now().await;
                 }
@@ -172,13 +176,18 @@ async fn file_copy(
             )
         })??;
         part_datas[part as usize] = Some(data);
+        let mut data_to_write = vec![];
         while part_to_write < num_parts
             && let Some(data) = part_datas[part_to_write as usize].take()
         {
-            fw.write(&data).await?;
+            data_to_write.extend(data);
             all_data_limits.split(1);
             part_to_write += 1;
         }
+        if data_to_write.len() > 0 {
+            fw.write(&data_to_write).await?;
+        }
+        tokio::task::yield_now().await;
     }
     drop(all_data_limits);
     fw.flush().await?;
