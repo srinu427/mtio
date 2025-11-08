@@ -150,7 +150,7 @@ async fn file_copy(
                         fw.write(&data).await?;
                         all_data_limits.split(1);
                         part_to_write += 1;
-                        println!("written part {} in {:?}", part, dst);
+                        println!("written part {} in {:?}", part_to_write, dst);
                     }
                 }
                 Err(TryAcquireError::Closed) => {
@@ -181,7 +181,7 @@ async fn file_copy(
             fw.write(&data).await?;
             all_data_limits.split(1);
             part_to_write += 1;
-            println!("written part {} in {:?}", part, dst);
+            println!("written part {} in {:?}", part_to_write, dst);
         }
     }
     drop(fo_sem);
