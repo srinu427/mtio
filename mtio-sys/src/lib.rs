@@ -86,7 +86,7 @@ async fn _limit_file_set_len(semaphore: &Semaphore, path: &Path, size: u64) -> i
     Ok(())
 }
 
-async fn _limit_file_write(semaphore: &Semaphore, path: &Path, data: &[u8]) -> io::Result<()> {
+async fn limit_file_write(semaphore: &Semaphore, path: &Path, data: &[u8]) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     fs::write(path, data).await?;
     drop(limit);
@@ -131,6 +131,8 @@ async fn file_copy(
         .await
         .map_err(acquire_to_io_error)?;
     let mut join_set = JoinSet::new();
+
+    limit_file_write(&file_open_sem, dst, &[]).await?;
 
     let mut part_to_write = 0;
 
