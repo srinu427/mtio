@@ -365,19 +365,20 @@ pub fn mt_copy(
 fn do_delete(
     path: PathBuf,
     file_open_sem: Arc<Semaphore>,
+    max_ls: u32,
 ) -> impl Future<Output = io::Result<()>> + Send {
     async move {
         let metadata = limit_fs_metadata(&file_open_sem, &path).await?;
         if metadata.is_dir() {
             let mut limit = file_open_sem
-                .acquire_many(2)
+                .acquire_many(max_ls + 1)
                 .await
                 .map_err(acquire_to_io_error)?;
-            limit.split(1);
+            limit.split(max_ls as _);
             let mut dir_reader = fs::read_dir(&path).await?;
             let mut join_set = JoinSet::new();
             while let Some(dir_entry) = dir_reader.next_entry().await? {
-                join_set.spawn(do_delete(dir_entry.path(), file_open_sem.clone()));
+                join_set.spawn(do_delete(dir_entry.path(), file_open_sem.clone(), max_ls));
             }
             drop(limit);
             join_set.join_all().await;
@@ -406,7 +407,11 @@ pub fn mt_delete(paths: Vec<&Path>, cores: usize, max_open_files: usize) -> io::
         let mut join_set = JoinSet::new();
         for path in paths {
             let file_open_sem = file_open_sem.clone();
-            join_set.spawn(do_delete(path.to_path_buf(), file_open_sem));
+            join_set.spawn(do_delete(
+                path.to_path_buf(),
+                file_open_sem,
+                (max_open_files as u32 / 2).max(1),
+            ));
         }
         join_set
             .join_all()
