@@ -350,6 +350,7 @@ fn do_delete(
     file_open_sem: Arc<Semaphore>,
 ) -> impl Future<Output = io::Result<()>> + Send {
     async move {
+        println!("deleting: {:?}", &path);
         let metadata = limit_fs_metadata(&file_open_sem, &path).await?;
         if metadata.is_dir() {
             limit_create_dir_all(&file_open_sem, &path).await?;
