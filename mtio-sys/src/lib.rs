@@ -38,7 +38,7 @@ async fn limit_create_dir_all(semaphore: &Semaphore, path: &Path) -> io::Result<
     result
 }
 
-async fn _limit_remove_file(semaphore: &Semaphore, path: &Path) -> io::Result<()> {
+async fn limit_remove_file(semaphore: &Semaphore, path: &Path) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     let result = fs::remove_file(path).await;
     drop(limit);
@@ -342,5 +342,60 @@ pub fn mt_copy(
             data_chunk_sem,
         )
         .await
+    })
+}
+
+fn do_delete(
+    path: PathBuf,
+    file_open_sem: Arc<Semaphore>,
+) -> impl Future<Output = io::Result<()>> + Send {
+    async move {
+        let metadata = limit_fs_metadata(&file_open_sem, &path).await?;
+        if metadata.is_dir() {
+            limit_create_dir_all(&file_open_sem, &path).await?;
+            let mut limit = file_open_sem
+                .acquire_many(2)
+                .await
+                .map_err(acquire_to_io_error)?;
+            limit.split(1);
+            let mut dir_reader = fs::read_dir(&path).await?;
+            let mut join_set = JoinSet::new();
+            while let Some(dir_entry) = dir_reader.next_entry().await? {
+                join_set.spawn(do_delete(dir_entry.path(), file_open_sem.clone()));
+            }
+            join_set.join_all().await;
+            drop(limit);
+        } else if metadata.is_file() {
+            limit_remove_file(&file_open_sem, &path).await?
+        }
+        Ok(())
+    }
+}
+
+pub fn mt_delete(paths: Vec<&Path>, cores: usize, max_open_files: usize) -> io::Result<()> {
+    let file_open_sem = Arc::new(Semaphore::new(max_open_files as usize));
+    let thread_pool = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(cores)
+        .max_blocking_threads(max_open_files)
+        .enable_all()
+        .build()
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::HostUnreachable,
+                format!("thread pool init failed: {e}"),
+            )
+        })?;
+    thread_pool.block_on(async move {
+        let mut join_set = JoinSet::new();
+        for path in paths {
+            let file_open_sem = file_open_sem.clone();
+            join_set.spawn(do_delete(path.to_path_buf(), file_open_sem));
+        }
+        join_set
+            .join_all()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(())
     })
 }
