@@ -350,10 +350,8 @@ fn do_delete(
     file_open_sem: Arc<Semaphore>,
 ) -> impl Future<Output = io::Result<()>> + Send {
     async move {
-        println!("deleting: {:?}", &path);
         let metadata = limit_fs_metadata(&file_open_sem, &path).await?;
         if metadata.is_dir() {
-            limit_create_dir_all(&file_open_sem, &path).await?;
             let mut limit = file_open_sem
                 .acquire_many(2)
                 .await
@@ -365,8 +363,11 @@ fn do_delete(
                 join_set.spawn(do_delete(dir_entry.path(), file_open_sem.clone()));
             }
             join_set.join_all().await;
+            println!("deleting folder: {:?}", &path);
+            _limit_remove_dir(&file_open_sem, &path).await?;
             drop(limit);
         } else if metadata.is_file() {
+            println!("deleting file: {:?}", &path);
             limit_remove_file(&file_open_sem, &path).await?
         }
         Ok(())
