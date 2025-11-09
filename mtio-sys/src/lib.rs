@@ -425,3 +425,96 @@ pub fn mt_delete(paths: Vec<&Path>, cores: usize, max_open_files: usize) -> io::
         Ok(())
     })
 }
+
+fn do_du(
+    path: PathBuf,
+    file_open_sem: Arc<Semaphore>,
+) -> impl Future<Output = io::Result<u64>> + Send {
+    async move {
+        let mut size = 0u64;
+        let metadata = limit_fs_metadata(&file_open_sem, &path).await?;
+        if metadata.is_dir() {
+            let mut limit = file_open_sem
+                .acquire_many(2)
+                .await
+                .map_err(acquire_to_io_error)?;
+            limit.split(1);
+            let mut dir_reader = fs::read_dir(&path).await?;
+            let mut join_set = JoinSet::new();
+            let mut batch = Vec::with_capacity(1000);
+            while let Some(dir_entry) = dir_reader.next_entry().await? {
+                batch.push(dir_entry.path());
+                if batch.len() == 1000 {
+                    for p in batch.drain(..) {
+                        join_set.spawn(do_du(p, file_open_sem.clone()));
+                    }
+                }
+            }
+            for p in batch.drain(..) {
+                join_set.spawn(do_du(p, file_open_sem.clone()));
+            }
+            drop(limit);
+            size += join_set
+                .join_all()
+                .await
+                .into_iter()
+                .map(|x| x.unwrap_or_default())
+                .sum::<u64>();
+            size += metadata.len();
+        } else if metadata.is_file() {
+            limit_remove_file(&file_open_sem, &path).await?
+        }
+        Ok(size)
+    }
+}
+
+fn print_bytes_human_readable(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit_index = 0;
+    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+    format!("{:.2} {}", size, UNITS[unit_index])
+}
+
+pub fn mt_du(paths: Vec<&Path>, cores: usize, max_open_files: usize) -> io::Result<()> {
+    let file_open_sem = Arc::new(Semaphore::new(max_open_files as usize));
+    let thread_pool = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(cores)
+        .max_blocking_threads(max_open_files)
+        .enable_all()
+        .build()
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::HostUnreachable,
+                format!("thread pool init failed: {e}"),
+            )
+        })?;
+    thread_pool.block_on(async move {
+        let mut join_set = JoinSet::new();
+        for path in paths {
+            let path = path.to_path_buf();
+            let file_open_sem = file_open_sem.clone();
+            join_set.spawn(async move {
+                let size = do_du(path.clone(), file_open_sem).await?;
+                io::Result::Ok((path, size))
+            });
+        }
+        for du_res in join_set.join_all().await {
+            match du_res {
+                Ok(du_res) => {
+                    println!(
+                        "{} / {} - {:?}",
+                        print_bytes_human_readable(du_res.1),
+                        du_res.1,
+                        &du_res.0
+                    )
+                }
+                Err(e) => eprintln!("error in du: {e}"),
+            }
+        }
+        Ok(())
+    })
+}
