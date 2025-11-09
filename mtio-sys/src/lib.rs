@@ -1,11 +1,12 @@
 use std::{
+    io::{Read, Seek},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use tokio::{
     fs,
-    io::{self, AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
+    io::{self, AsyncWriteExt},
     sync::{AcquireError, Semaphore, TryAcquireError},
     task::JoinSet,
 };
@@ -47,15 +48,25 @@ async fn _limit_remove_dir(semaphore: &Semaphore, path: &Path) -> io::Result<()>
 
 async fn limit_file_read(
     semaphore: &Semaphore,
-    path: &Path,
+    path: PathBuf,
     offset: u64,
     size: u64,
 ) -> io::Result<Vec<u8>> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
-    let mut file = fs::File::open(path).await?;
-    file.seek(io::SeekFrom::Start(offset)).await?;
-    let mut buffer = vec![0u8; size as usize];
-    file.read_exact(&mut buffer).await?;
+    let buffer = tokio::task::spawn_blocking(move || {
+        let mut file = std::fs::File::open(&path)?;
+        file.seek(io::SeekFrom::Start(offset))?;
+        let mut buffer = vec![0u8; size as usize];
+        file.read_exact(&mut buffer)?;
+        io::Result::Ok(buffer)
+    })
+    .await
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            format!("async runtime error: {e}"),
+        )
+    })??;
     drop(limit);
     Ok(buffer)
 }
@@ -122,9 +133,8 @@ async fn file_copy(
                     let src = src.to_path_buf();
                     all_data_limits.merge(limit);
                     join_set.spawn(async move {
-                        let data =
-                            limit_file_read(&file_open_sem, &src, part * part_size, data_len)
-                                .await?;
+                        let data = limit_file_read(&file_open_sem, src, part * part_size, data_len)
+                            .await?;
                         io::Result::Ok((part, data))
                     });
                     tokio::task::yield_now().await;
