@@ -361,6 +361,7 @@ fn do_delete(
             let mut join_set = JoinSet::new();
             while let Some(dir_entry) = dir_reader.next_entry().await? {
                 join_set.spawn(do_delete(dir_entry.path(), file_open_sem.clone()));
+                tokio::task::yield_now().await;
             }
             join_set.join_all().await;
             println!("deleting folder: {:?}", &path);
