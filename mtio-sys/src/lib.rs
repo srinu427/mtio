@@ -417,11 +417,12 @@ pub fn mt_delete(paths: Vec<&Path>, cores: usize, max_open_files: usize) -> io::
             let file_open_sem = file_open_sem.clone();
             join_set.spawn(do_delete(path.to_path_buf(), file_open_sem));
         }
-        join_set
-            .join_all()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
+        for rm_res in join_set.join_all().await {
+            if let Err(e) = rm_res {
+                eprintln!("error while rm: {e}");
+            }
+        }
+
         Ok(())
     })
 }
