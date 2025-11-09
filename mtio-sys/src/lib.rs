@@ -85,33 +85,6 @@ async fn limit_file_set_len(semaphore: &Semaphore, path: &Path, size: u64) -> io
     Ok(())
 }
 
-async fn limit_file_write(
-    semaphore: &Semaphore,
-    path: PathBuf,
-    offset: u64,
-    mut data: Vec<u8>,
-) -> io::Result<()> {
-    let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
-    tokio::task::spawn_blocking(move || {
-        let mut file = std::fs::File::options()
-            .write(true)
-            .truncate(false)
-            .open(&path)?;
-        file.seek(io::SeekFrom::Start(offset))?;
-        file.write_all(&mut data)?;
-        io::Result::Ok(())
-    })
-    .await
-    .map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            format!("async runtime error: {e}"),
-        )
-    })??;
-    drop(limit);
-    Ok(())
-}
-
 async fn limit_file_write_full(semaphore: &Semaphore, path: &Path, data: &[u8]) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     fs::write(path, data).await?;
@@ -140,6 +113,38 @@ async fn append_to_file(semaphore: &Semaphore, path: PathBuf, mut data: Vec<u8>)
     Ok(())
 }
 
+async fn file_chunk_copy(
+    semaphore: &Semaphore,
+    src: PathBuf,
+    dst: PathBuf,
+    offset: u64,
+    size: u64,
+) -> io::Result<()> {
+    let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
+    let buffer = tokio::task::spawn_blocking(move || {
+        let mut file = std::fs::File::open(&src)?;
+        file.seek(io::SeekFrom::Start(offset))?;
+        let mut buffer = vec![0u8; size as usize];
+        file.read_exact(&mut buffer)?;
+        let mut file = std::fs::File::options()
+            .write(true)
+            .truncate(false)
+            .open(&dst)?;
+        file.seek(io::SeekFrom::Start(offset))?;
+        file.write_all(&mut buffer)?;
+        io::Result::Ok(())
+    })
+    .await
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            format!("async runtime error: {e}"),
+        )
+    })??;
+    drop(limit);
+    Ok(buffer)
+}
+
 async fn file_copy_preallocate(
     src: &Path,
     src_metadata: std::fs::Metadata,
@@ -164,9 +169,7 @@ async fn file_copy_preallocate(
         let src = src.to_path_buf();
         let dst = dst.to_path_buf();
         join_set.spawn(async move {
-            let data = limit_file_read(&file_open_sem, src, part * part_size, data_len).await?;
-            limit_file_write(&file_open_sem, dst, part * part_size, data).await?;
-            io::Result::Ok(())
+            file_chunk_copy(&file_open_sem, src, dst, part * part_size, data_len).await
         });
     }
     join_set
