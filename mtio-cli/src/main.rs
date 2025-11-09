@@ -20,7 +20,7 @@ pub struct CopyArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct RmArgs {
-    #[clap(long, short)]
+    #[clap(long, short, num_args = 1..)]
     pub input: Vec<String>,
     #[clap(long, short, default_value_t = 2)]
     pub threads: usize,
