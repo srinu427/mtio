@@ -280,6 +280,7 @@ fn do_copy(
     part_size: u64,
     file_open_sem: Arc<Semaphore>,
     data_chunk_sem: Arc<Semaphore>,
+    preallocate: bool,
 ) -> impl Future<Output = io::Result<()>> + Send {
     async move {
         let metadata = limit_fs_metadata(&file_open_sem, &src).await?;
@@ -301,12 +302,26 @@ fn do_copy(
                     part_size,
                     file_open_sem.clone(),
                     data_chunk_sem.clone(),
+                    preallocate,
                 ));
             }
-            join_set.join_all().await;
             drop(limit);
+            join_set.join_all().await;
         } else if metadata.is_file() {
-            file_copy_preallocate(&src, metadata, &dst, part_size, file_open_sem.clone()).await?
+            if preallocate {
+                file_copy_preallocate(&src, metadata, &dst, part_size, file_open_sem.clone())
+                    .await?
+            } else {
+                file_copy(
+                    &src,
+                    metadata,
+                    &dst,
+                    part_size,
+                    file_open_sem.clone(),
+                    data_chunk_sem.clone(),
+                )
+                .await?
+            }
         }
         Ok(())
     }
@@ -319,6 +334,7 @@ pub fn mt_copy(
     cores: usize,
     max_open_files: usize,
     max_parts_in_mem: u64,
+    preallocate: bool,
 ) -> io::Result<()> {
     let file_open_sem = Arc::new(Semaphore::new(max_open_files as usize));
     let data_chunk_sem = Arc::new(Semaphore::new(max_parts_in_mem as usize));
@@ -340,6 +356,7 @@ pub fn mt_copy(
             part_size,
             file_open_sem,
             data_chunk_sem,
+            preallocate,
         )
         .await
     })
@@ -362,10 +379,9 @@ fn do_delete(
             let mut join_set = JoinSet::new();
             while let Some(dir_entry) = dir_reader.next_entry().await? {
                 join_set.spawn(do_delete(dir_entry.path(), file_open_sem.clone()));
-                tokio::task::yield_now().await;
             }
-            join_set.join_all().await;
             drop(limit);
+            join_set.join_all().await;
             limit_remove_dir(&file_open_sem, &path).await?;
         } else if metadata.is_file() {
             limit_remove_file(&file_open_sem, &path).await?

@@ -16,6 +16,8 @@ pub struct CopyArgs {
     pub threads: usize,
     #[clap(long, short, default_value_t = 128)]
     pub files_open_max: usize,
+    #[clap(long, short, default_value_t = false)]
+    pub preallocate: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -51,6 +53,7 @@ fn main() {
             copy_args.threads,
             copy_args.files_open_max,
             copy_args.max_in_mem_parts,
+            copy_args.preallocate,
         )
         .inspect_err(|e| eprintln!("{e}")),
         AppCommands::Rm(rm_args) => {
