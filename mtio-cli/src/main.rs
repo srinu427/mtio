@@ -30,10 +30,21 @@ pub struct RmArgs {
     pub files_open_max: usize,
 }
 
+#[derive(Debug, clap::Args)]
+pub struct DuArgs {
+    #[clap(long, short, num_args = 1..)]
+    pub input: Vec<String>,
+    #[clap(long, short, default_value_t = 2)]
+    pub threads: usize,
+    #[clap(long, short, default_value_t = 128)]
+    pub files_open_max: usize,
+}
+
 #[derive(Debug, clap::Subcommand)]
 pub enum AppCommands {
     Copy(CopyArgs),
     Rm(RmArgs),
+    Du(DuArgs),
 }
 
 #[derive(Debug, clap::Parser)]
@@ -59,6 +70,11 @@ fn main() {
         AppCommands::Rm(rm_args) => {
             let paths: Vec<_> = rm_args.input.iter().map(|s| Path::new(s)).collect();
             mtio_sys::mt_delete(paths, rm_args.threads, rm_args.files_open_max)
+                .inspect_err(|e| eprintln!("{e}"))
+        }
+        AppCommands::Du(du_args) => {
+            let paths: Vec<_> = du_args.input.iter().map(|s| Path::new(s)).collect();
+            mtio_sys::mt_du(paths, du_args.threads, du_args.files_open_max)
                 .inspect_err(|e| eprintln!("{e}"))
         }
     };
