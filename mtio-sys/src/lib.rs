@@ -366,7 +366,6 @@ fn do_delete(
     path: PathBuf,
     file_open_sem: Arc<Semaphore>,
 ) -> impl Future<Output = io::Result<()>> + Send {
-    println!("deleting: {:?}", &path);
     async move {
         let metadata = limit_fs_metadata(&file_open_sem, &path).await?;
         if metadata.is_dir() {
@@ -386,7 +385,6 @@ fn do_delete(
         } else if metadata.is_file() {
             limit_remove_file(&file_open_sem, &path).await?
         }
-        println!("deleted: {:?}", &path);
         Ok(())
     }
 }
