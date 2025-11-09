@@ -45,7 +45,7 @@ async fn limit_remove_file(semaphore: &Semaphore, path: &Path) -> io::Result<()>
     result
 }
 
-async fn _limit_remove_dir(semaphore: &Semaphore, path: &Path) -> io::Result<()> {
+async fn limit_remove_dir(semaphore: &Semaphore, path: &Path) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     let result = fs::remove_dir(path).await;
     drop(limit);
@@ -365,8 +365,8 @@ fn do_delete(
                 tokio::task::yield_now().await;
             }
             join_set.join_all().await;
-            _limit_remove_dir(&file_open_sem, &path).await?;
             drop(limit);
+            limit_remove_dir(&file_open_sem, &path).await?;
         } else if metadata.is_file() {
             limit_remove_file(&file_open_sem, &path).await?
         }
