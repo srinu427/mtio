@@ -19,14 +19,14 @@ fn acquire_to_io_error(e: AcquireError) -> io::Error {
 
 async fn limit_fs_metadata(semaphore: &Semaphore, path: &Path) -> io::Result<std::fs::Metadata> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
-    let result = std::fs::metadata(path);
+    let result = fs::metadata(path).await;
     drop(limit);
     result
 }
 
 async fn limit_create_dir_all(semaphore: &Semaphore, path: &Path) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
-    let result = std::fs::create_dir_all(path);
+    let result = fs::create_dir_all(path).await;
     drop(limit);
     result
 }
@@ -77,7 +77,7 @@ async fn _limit_file_read_full(semaphore: &Semaphore, path: &Path) -> io::Result
     Ok(buffer)
 }
 
-async fn _limit_file_set_len(semaphore: &Semaphore, path: &Path, size: u64) -> io::Result<()> {
+async fn limit_file_set_len(semaphore: &Semaphore, path: &Path, size: u64) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     let file = fs::File::create(path).await?;
     file.set_len(size).await?;
@@ -85,7 +85,34 @@ async fn _limit_file_set_len(semaphore: &Semaphore, path: &Path, size: u64) -> i
     Ok(())
 }
 
-async fn limit_file_write(semaphore: &Semaphore, path: &Path, data: &[u8]) -> io::Result<()> {
+async fn limit_file_write(
+    semaphore: &Semaphore,
+    path: PathBuf,
+    offset: u64,
+    mut data: Vec<u8>,
+) -> io::Result<()> {
+    let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
+    tokio::task::spawn_blocking(move || {
+        let mut file = std::fs::File::options()
+            .write(true)
+            .truncate(false)
+            .open(&path)?;
+        file.seek(io::SeekFrom::Start(offset))?;
+        file.write_all(&mut data)?;
+        io::Result::Ok(())
+    })
+    .await
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            format!("async runtime error: {e}"),
+        )
+    })??;
+    drop(limit);
+    Ok(())
+}
+
+async fn limit_file_write_full(semaphore: &Semaphore, path: &Path, data: &[u8]) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     fs::write(path, data).await?;
     drop(limit);
@@ -113,6 +140,39 @@ async fn append_to_file(semaphore: &Semaphore, path: PathBuf, mut data: Vec<u8>)
     Ok(())
 }
 
+async fn file_copy_preallocate(
+    src: &Path,
+    src_metadata: std::fs::Metadata,
+    dst: &Path,
+    part_size: u64,
+    file_open_sem: Arc<Semaphore>,
+) -> io::Result<()> {
+    let size = src_metadata.len();
+    let num_parts = (size + part_size - 1) / part_size;
+
+    let mut join_set = JoinSet::new();
+
+    limit_file_set_len(&file_open_sem, dst, size).await?;
+
+    for part in 0..num_parts {
+        let data_len = if part == num_parts - 1 {
+            size - (part_size * (num_parts - 1))
+        } else {
+            part_size
+        };
+        let file_open_sem = file_open_sem.clone();
+        let src = src.to_path_buf();
+        let dst = dst.to_path_buf();
+        join_set.spawn(async move {
+            let data = limit_file_read(&file_open_sem, src, part * part_size, data_len).await?;
+            limit_file_write(&file_open_sem, dst, part * part_size, data).await?;
+            io::Result::Ok(())
+        });
+    }
+
+    Ok(())
+}
+
 async fn file_copy(
     src: &Path,
     src_metadata: std::fs::Metadata,
@@ -131,7 +191,7 @@ async fn file_copy(
         .map_err(acquire_to_io_error)?;
     let mut join_set = JoinSet::new();
 
-    limit_file_write(&file_open_sem, dst, &[]).await?;
+    limit_file_write_full(&file_open_sem, dst, &[]).await?;
 
     let mut part_to_write = 0;
 
@@ -250,15 +310,7 @@ fn do_copy(
             join_set.join_all().await;
             drop(limit);
         } else if metadata.is_file() {
-            file_copy(
-                &src,
-                metadata,
-                &dst,
-                part_size,
-                file_open_sem.clone(),
-                file_open_sem.clone(),
-            )
-            .await?
+            file_copy_preallocate(&src, metadata, &dst, part_size, file_open_sem.clone()).await?
         }
         Ok(())
     }
