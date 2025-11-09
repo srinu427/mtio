@@ -5,8 +5,7 @@ use std::{
 };
 
 use tokio::{
-    fs,
-    io::{self, AsyncWriteExt},
+    fs, io,
     sync::{AcquireError, Semaphore, TryAcquireError},
     task::JoinSet,
 };
@@ -20,14 +19,14 @@ fn acquire_to_io_error(e: AcquireError) -> io::Error {
 
 async fn limit_fs_metadata(semaphore: &Semaphore, path: &Path) -> io::Result<std::fs::Metadata> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
-    let result = fs::metadata(path).await;
+    let result = std::fs::metadata(path);
     drop(limit);
     result
 }
 
 async fn limit_create_dir_all(semaphore: &Semaphore, path: &Path) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
-    let result = fs::create_dir_all(path).await;
+    let result = std::fs::create_dir_all(path);
     drop(limit);
     result
 }
@@ -116,13 +115,13 @@ async fn append_to_file(semaphore: &Semaphore, path: PathBuf, mut data: Vec<u8>)
 
 async fn file_copy(
     src: &Path,
+    src_metadata: std::fs::Metadata,
     dst: &Path,
     part_size: u64,
     file_open_sem: Arc<Semaphore>,
     data_chunk_sem: Arc<Semaphore>,
 ) -> io::Result<()> {
-    let metadata = limit_fs_metadata(&file_open_sem, src).await?;
-    let size = metadata.len();
+    let size = src_metadata.len();
     let num_parts = (size + part_size - 1) / part_size;
 
     let mut part_datas: Vec<Option<Vec<u8>>> = vec![None; num_parts as usize];
@@ -253,6 +252,7 @@ fn do_copy(
         } else if metadata.is_file() {
             file_copy(
                 &src,
+                metadata,
                 &dst,
                 part_size,
                 file_open_sem.clone(),
