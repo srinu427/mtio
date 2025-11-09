@@ -96,7 +96,10 @@ async fn _limit_file_write(semaphore: &Semaphore, path: &Path, data: &[u8]) -> i
 async fn append_to_file(semaphore: &Semaphore, path: PathBuf, mut data: Vec<u8>) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
     tokio::task::spawn_blocking(move || {
-        let mut file = std::fs::File::options().append(true).open(&path)?;
+        let mut file = std::fs::File::options()
+            .append(true)
+            .create(true)
+            .open(&path)?;
         file.write_all(&mut data)?;
         io::Result::Ok(())
     })
