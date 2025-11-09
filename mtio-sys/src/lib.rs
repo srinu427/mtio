@@ -349,6 +349,7 @@ fn do_delete(
     path: PathBuf,
     file_open_sem: Arc<Semaphore>,
 ) -> impl Future<Output = io::Result<()>> + Send {
+    println!("deleting: {:?}", &path);
     async move {
         let metadata = limit_fs_metadata(&file_open_sem, &path).await?;
         if metadata.is_dir() {
@@ -364,13 +365,12 @@ fn do_delete(
                 tokio::task::yield_now().await;
             }
             join_set.join_all().await;
-            println!("deleting folder: {:?}", &path);
             _limit_remove_dir(&file_open_sem, &path).await?;
             drop(limit);
         } else if metadata.is_file() {
-            println!("deleting file: {:?}", &path);
             limit_remove_file(&file_open_sem, &path).await?
         }
+        println!("deleted: {:?}", &path);
         Ok(())
     }
 }
