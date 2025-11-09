@@ -376,8 +376,17 @@ fn do_delete(
             limit.split(1);
             let mut dir_reader = fs::read_dir(&path).await?;
             let mut join_set = JoinSet::new();
+            let mut batch = Vec::with_capacity(1000);
             while let Some(dir_entry) = dir_reader.next_entry().await? {
-                join_set.spawn(do_delete(dir_entry.path(), file_open_sem.clone()));
+                batch.push(dir_entry.path());
+                if batch.len() == 1000 {
+                    for p in batch.drain(..) {
+                        join_set.spawn(do_delete(p, file_open_sem.clone()));
+                    }
+                }
+            }
+            for p in batch.drain(..) {
+                join_set.spawn(do_delete(p, file_open_sem.clone()));
             }
             drop(limit);
             join_set.join_all().await;
