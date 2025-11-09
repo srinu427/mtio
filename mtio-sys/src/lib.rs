@@ -169,6 +169,11 @@ async fn file_copy_preallocate(
             io::Result::Ok(())
         });
     }
+    join_set
+        .join_all()
+        .await
+        .into_iter()
+        .collect::<io::Result<Vec<_>>>()?;
 
     Ok(())
 }
