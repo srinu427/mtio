@@ -1,5 +1,5 @@
 use std::{
-    io::{Read, Seek},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -93,6 +93,24 @@ async fn _limit_file_write(semaphore: &Semaphore, path: &Path, data: &[u8]) -> i
     Ok(())
 }
 
+async fn append_to_file(semaphore: &Semaphore, path: PathBuf, mut data: Vec<u8>) -> io::Result<()> {
+    let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
+    tokio::task::spawn_blocking(move || {
+        let mut file = std::fs::File::options().append(true).open(&path)?;
+        file.write_all(&mut data)?;
+        io::Result::Ok(())
+    })
+    .await
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            format!("async runtime error: {e}"),
+        )
+    })??;
+    drop(limit);
+    Ok(())
+}
+
 async fn file_copy(
     src: &Path,
     dst: &Path,
@@ -110,13 +128,6 @@ async fn file_copy(
         .await
         .map_err(acquire_to_io_error)?;
     let mut join_set = JoinSet::new();
-
-    let mut fo_sem = file_open_sem
-        .acquire_many(2)
-        .await
-        .map_err(acquire_to_io_error)?;
-    fo_sem.split(1);
-    let mut fw = fs::File::create(dst).await?;
 
     let mut part_to_write = 0;
 
@@ -161,7 +172,7 @@ async fn file_copy(
                         part_to_write += 1;
                     }
                     if data_to_write.len() > 0 {
-                        fw.write_all(&data_to_write).await?;
+                        append_to_file(&file_open_sem, dst.to_path_buf(), data_to_write).await?;
                     }
                     tokio::task::yield_now().await;
                 }
@@ -195,12 +206,10 @@ async fn file_copy(
             part_to_write += 1;
         }
         if data_to_write.len() > 0 {
-            fw.write_all(&data_to_write).await?;
+            append_to_file(&file_open_sem, dst.to_path_buf(), data_to_write).await?;
         }
     }
     drop(all_data_limits);
-    fw.flush().await?;
-    drop(fo_sem);
 
     Ok(())
 }
