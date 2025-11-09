@@ -463,7 +463,7 @@ fn do_du(
                 .sum::<u64>();
             size += metadata.len();
         } else if metadata.is_file() {
-            limit_remove_file(&file_open_sem, &path).await?
+            size += metadata.len();
         }
         Ok(size)
     }
