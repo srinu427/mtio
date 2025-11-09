@@ -7,13 +7,20 @@ use std::{
 use tokio::{
     fs, io,
     sync::{AcquireError, Semaphore, TryAcquireError},
-    task::JoinSet,
+    task::{JoinError, JoinSet},
 };
 
 fn acquire_to_io_error(e: AcquireError) -> io::Error {
     io::Error::new(
         io::ErrorKind::Other,
         format!("failed to acquire fs operation permit: {e}"),
+    )
+}
+
+fn task_to_io_error(e: JoinError) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        format!("async runtime error: {e}"),
     )
 }
 
@@ -60,12 +67,7 @@ async fn limit_file_read(
         io::Result::Ok(buffer)
     })
     .await
-    .map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            format!("async runtime error: {e}"),
-        )
-    })??;
+    .map_err(task_to_io_error)??;
     drop(limit);
     Ok(buffer)
 }
@@ -103,12 +105,7 @@ async fn append_to_file(semaphore: &Semaphore, path: PathBuf, mut data: Vec<u8>)
         io::Result::Ok(())
     })
     .await
-    .map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            format!("async runtime error: {e}"),
-        )
-    })??;
+    .map_err(task_to_io_error)??;
     drop(limit);
     Ok(())
 }
@@ -121,11 +118,17 @@ async fn file_chunk_copy(
     size: u64,
 ) -> io::Result<()> {
     let limit = semaphore.acquire().await.map_err(acquire_to_io_error)?;
-    let buffer = tokio::task::spawn_blocking(move || {
+    let mut buffer = tokio::task::spawn_blocking(move || {
         let mut file = std::fs::File::open(&src)?;
         file.seek(io::SeekFrom::Start(offset))?;
         let mut buffer = vec![0u8; size as usize];
         file.read_exact(&mut buffer)?;
+
+        io::Result::Ok(buffer)
+    })
+    .await
+    .map_err(task_to_io_error)??;
+    tokio::task::spawn_blocking(move || {
         let mut file = std::fs::File::options()
             .write(true)
             .truncate(false)
@@ -135,14 +138,9 @@ async fn file_chunk_copy(
         io::Result::Ok(())
     })
     .await
-    .map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            format!("async runtime error: {e}"),
-        )
-    })??;
+    .map_err(task_to_io_error)??;
     drop(limit);
-    Ok(buffer)
+    Ok(())
 }
 
 async fn file_copy_preallocate(
@@ -228,12 +226,7 @@ async fn file_copy(
                         tokio::task::yield_now().await;
                         continue;
                     };
-                    let (part, data) = chunk_res.map_err(|e| {
-                        io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            format!("error with async runtime: {e}"),
-                        )
-                    })??;
+                    let (part, data) = chunk_res.map_err(task_to_io_error)??;
                     part_datas[part as usize] = Some(data);
                     let mut data_to_write = vec![];
                     while part_to_write < num_parts
@@ -262,12 +255,7 @@ async fn file_copy(
         let Some(chunk_res) = join_set.join_next().await else {
             break;
         };
-        let (part, data) = chunk_res.map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                format!("error with async runtime: {e}"),
-            )
-        })??;
+        let (part, data) = chunk_res.map_err(task_to_io_error)??;
         part_datas[part as usize] = Some(data);
         let mut data_to_write = vec![];
         while part_to_write < num_parts
