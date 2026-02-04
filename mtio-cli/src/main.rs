@@ -72,7 +72,7 @@ fn bytes_to_human(size: u64) -> String {
 
 fn main() {
     let args = AppArgs::parse();
-    println!("{args:?}");
+    // println!("{args:?}");
     let _ = match args.command {
         AppCommands::Copy(_copy_args) => {}
         AppCommands::Rm(_rm_args) => {}
@@ -89,13 +89,12 @@ fn main() {
                 .filter_map(|p| p.ok())
                 .collect();
             tp.install(|| {
-                work.par_iter().for_each(|wp| {
-                    println!("starting du of {wp:?}");
+                for wp in &work {
                     match mtio_sys::du::du(&wp.to_string_lossy().to_string(), None) {
                         Ok(s) => println!("{} - {wp:?}", bytes_to_human(s)),
                         Err(e) => eprintln!("failed getting size for {wp:?}: {e}"),
                     }
-                })
+                }
             });
         }
     };
