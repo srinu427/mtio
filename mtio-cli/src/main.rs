@@ -1,7 +1,10 @@
-use std::path::Path;
+use std::{io, path::Path};
 
 use clap::Parser;
-use mtio_sys::rayon;
+use mtio_sys::rayon::{
+    self,
+    iter::{IntoParallelRefIterator, ParallelIterator},
+};
 
 #[derive(Debug, clap::Args)]
 pub struct CopyArgs {
@@ -44,6 +47,29 @@ pub struct AppArgs {
     command: AppCommands,
 }
 
+// static SIZE_LEVELS: &[&str] = &["B", "K", "M", "G", "T"];
+
+fn bytes_to_human(size: u64) -> String {
+    let mut rem = size;
+    if rem < 1024 {
+        return format!("{rem}B - {size}B");
+    }
+    rem = rem / 1024;
+    if rem < 1024 {
+        return format!("{rem}K - {size}B");
+    }
+    rem = rem / 1024;
+    if rem < 1024 {
+        return format!("{rem}M - {size}B");
+    }
+    rem = rem / 1024;
+    if rem < 1024 {
+        return format!("{rem}G - {size}B");
+    }
+    rem = rem / 1024;
+    return format!("{rem}T - {size}B");
+}
+
 fn main() {
     let args = AppArgs::parse();
     println!("{args:?}");
@@ -55,9 +81,21 @@ fn main() {
                 .num_threads(du_args.threads)
                 .build()
                 .expect("thread pool init failed");
-            tp.install(|| mtio_sys::du::du(&du_args.input, None))
-                .inspect_err(|e| eprintln!("failed finding sizes: {e}"))
-                .ok();
+            let work: Vec<_> = glob::glob(&du_args.input)
+                .inspect_err(|e| {
+                    eprintln!("cannot resolve any paths for \"{}\": {e}", &du_args.input)
+                })
+                .expect("cannot proceed")
+                .filter_map(|p| p.ok())
+                .collect();
+            tp.install(|| {
+                work.par_iter().for_each(|wp| {
+                    match mtio_sys::du::du(&wp.to_string_lossy().to_string(), None) {
+                        Ok(s) => println!("{} - {wp:?}", bytes_to_human(s)),
+                        Err(e) => eprintln!("failed getting size for {wp:?}: {e}"),
+                    }
+                })
+            });
         }
     };
 }
