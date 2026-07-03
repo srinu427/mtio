@@ -1,0 +1,19 @@
+[package]
+name = "mtio"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "mtio_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mtio"
+path = "src/main.rs"
+
+[dependencies]
+argh = "0.1.19"
+env_logger = "0.11.11"
+glob = "0.3.3"
+log = "0.4.33"
+rayon = "1.11.0"
